@@ -7,7 +7,7 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./public.key:/app/keys/public.key:ro # Hanya butuh Public Key
+      - ./public.key:/app/keys/public.key:ro
     depends_on:
       - user-service
       - transaction-service
@@ -18,7 +18,7 @@ services:
   user-service:
     build: ./user-service
     volumes:
-      - ./private.key:/app/keys/private.key:ro # Butuh Private Key untuk Sign Token
+      - ./private.key:/app/keys/private.key:ro
     expose:
       - "3001"
     networks:
@@ -32,11 +32,12 @@ services:
     networks:
       - family-net
 
-  # --- FRONTEND (Dummy) ---
+  # --- FRONTEND ---
+  # Pastikan Dockerfile frontend sudah Anda buat sesuai panduan sebelumnya
   frontend:
     build: ./frontend
     ports:
-      - "8080:80"
+      - "5173:80" # Mapping port host 5173 ke container 80 (nginx)
     networks:
       - family-net
 
