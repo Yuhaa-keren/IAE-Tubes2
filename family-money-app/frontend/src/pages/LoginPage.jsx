@@ -1,6 +1,6 @@
 import React, { useState, useContext } from 'react';
 import { AuthContext } from '../context/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -33,6 +33,9 @@ export default function LoginPage() {
           </div>
           <button type="submit">Masuk Aplikasi</button>
         </form>
+        <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '14px' }}>
+          Belum punya akun? <Link to="/register" style={{ color: 'var(--primary)' }}>Daftar di sini</Link>
+        </p>
       </div>
     </div>
   );

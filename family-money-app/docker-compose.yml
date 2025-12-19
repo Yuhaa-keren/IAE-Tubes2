@@ -11,6 +11,7 @@ services:
     depends_on:
       - user-service
       - transaction-service
+      - notification-service
     networks:
       - family-net
 
@@ -21,6 +22,13 @@ services:
       - ./private.key:/app/keys/private.key:ro
     expose:
       - "3001"
+    environment:
+      - DB_HOST=host.docker.internal
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=family_money
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - family-net
 
@@ -29,15 +37,38 @@ services:
     build: ./transaction-service
     expose:
       - "3002"
+    environment:
+      - DB_HOST=host.docker.internal
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=family_money
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - notification-service
+    networks:
+      - family-net
+
+  # --- NOTIFICATION SERVICE (REST) ---
+  notification-service:
+    build: ./notification-service
+    expose:
+      - "3003"
+    environment:
+      - DB_HOST=host.docker.internal
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=family_money
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - family-net
 
   # --- FRONTEND ---
-  # Pastikan Dockerfile frontend sudah Anda buat sesuai panduan sebelumnya
   frontend:
     build: ./frontend
     ports:
-      - "5173:80" # Mapping port host 5173 ke container 80 (nginx)
+      - "5173:80"
     networks:
       - family-net
 

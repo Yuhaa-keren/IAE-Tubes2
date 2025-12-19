@@ -34,16 +34,22 @@ const verifyToken = (req, res, next) => {
 app.use(verifyToken);
 
 // Proxy ke User Service (REST)
-app.use('/auth', createProxyMiddleware({ 
-    target: 'http://user-service:3001', 
-    changeOrigin: true 
+app.use('/auth', createProxyMiddleware({
+    target: 'http://user-service:3001',
+    changeOrigin: true
 }));
 
 // Proxy ke Transaction Service (GraphQL)
-app.use('/graphql', createProxyMiddleware({ 
-    target: 'http://transaction-service:3002', 
+app.use('/graphql', createProxyMiddleware({
+    target: 'http://transaction-service:3002/graphql',
     changeOrigin: true,
     ws: true // Support WebSocket for Subscriptions
+}));
+
+// Proxy ke Notification Service (REST)
+app.use('/notifications', createProxyMiddleware({
+    target: 'http://notification-service:3003',
+    changeOrigin: true
 }));
 
 app.listen(3000, () => {

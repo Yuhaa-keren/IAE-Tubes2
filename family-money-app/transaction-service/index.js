@@ -8,15 +8,63 @@ const { useServer } = require('graphql-ws/lib/use/ws');
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const { PubSub } = require('graphql-subscriptions'); // Note: For prod use Redis
+const { PubSub } = require('graphql-subscriptions');
+const mysql = require('mysql2/promise');
 
 const pubsub = new PubSub();
 const app = express();
 const httpServer = createServer(app);
 
-// --- DATA MOCK ---
-let transactions = []; // History Uang
-let fundRequests = []; // Pengajuan Dana
+// Service URLs
+const USER_SERVICE_URL = 'http://user-service:3001';
+const NOTIFICATION_SERVICE_URL = 'http://notification-service:3003';
+
+// MySQL Connection Pool
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'family_money',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Helper functions for inter-service communication
+async function updateUserBalance(userId, amount, type) {
+  const response = await fetch(`${USER_SERVICE_URL}/users/${userId}/balance`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ amount, type })
+  });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.message || 'Failed to update balance');
+  return data;
+}
+
+async function getUserBalance(userId) {
+  const response = await fetch(`${USER_SERVICE_URL}/users/${userId}/balance`);
+  const data = await response.json();
+  return data.balance;
+}
+
+async function getAllChildren() {
+  const response = await fetch(`${USER_SERVICE_URL}/users/children`);
+  return await response.json();
+}
+
+async function sendNotification(userId, title, message, type) {
+  try {
+    await fetch(`${NOTIFICATION_SERVICE_URL}/notifications`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, title, message, type })
+    });
+    console.log(`[Notification] Sent to user ${userId}: ${title}`);
+  } catch (error) {
+    console.error('Error sending notification:', error);
+  }
+}
 
 // --- SCHEMA ---
 const typeDefs = `
@@ -34,20 +82,46 @@ const typeDefs = `
     title: String
     description: String
     amount: Float
+    deadline: String
     status: String 
     requesterId: ID
+    requesterName: String
+    createdAt: String
+  }
+
+  type TransactionResult {
+    transaction: Transaction
+    newBalance: Float
+  }
+
+  type FundRequestResult {
+    request: FundRequest
+    childBalance: Float
+    parentBalance: Float
+  }
+
+  type Child {
+    id: ID!
+    username: String
+    balance: Float
+    role: String
   }
 
   type Query {
     getHistory(userId: ID!): [Transaction]
     getRequests(status: String): [FundRequest]
-    getDashboardStats(userId: ID!): String
+    getMyRequests(userId: ID!): [FundRequest]
+    getPendingRequests: [FundRequest]
+    getBalance(userId: ID!): Float
+    getChildren: [Child]
   }
 
   type Mutation {
-    addTransaction(title: String, amount: Float, type: String, userId: ID!): Transaction
-    createFundRequest(title: String, description: String, amount: Float, requesterId: ID!): FundRequest
-    approveRequest(requestId: ID!, parentId: ID!): FundRequest
+    addTransaction(title: String, amount: Float, type: String, userId: ID!): TransactionResult
+    createFundRequest(title: String, description: String, amount: Float, deadline: String, requesterId: ID!, requesterName: String): FundRequest
+    approveRequest(requestId: ID!, parentId: ID!): FundRequestResult
+    rejectRequest(requestId: ID!): FundRequest
+    deleteFundRequest(requestId: ID!, userId: ID!): Boolean
   }
 
   type Subscription {
@@ -58,32 +132,203 @@ const typeDefs = `
 // --- RESOLVERS ---
 const resolvers = {
   Query: {
-    getHistory: (_, { userId }) => transactions.filter(t => t.userId == userId),
-    getRequests: (_, { status }) => status ? fundRequests.filter(r => r.status === status) : fundRequests,
-    getDashboardStats: (_, { userId }) => "Logic hitung saldo/pengeluaran disini",
+    getHistory: async (_, { userId }) => {
+      const [rows] = await pool.query(
+        'SELECT id, user_id as userId, title, amount, type, created_at as date FROM transactions WHERE user_id = ? ORDER BY created_at DESC',
+        [userId]
+      );
+      return rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        date: r.date ? new Date(r.date).toISOString() : new Date().toISOString()
+      }));
+    },
+    getRequests: async (_, { status }) => {
+      let query = 'SELECT id, requester_id as requesterId, requester_name as requesterName, title, description, amount, deadline, status, created_at as createdAt FROM fund_requests';
+      let params = [];
+      if (status) {
+        query += ' WHERE status = ?';
+        params.push(status);
+      }
+      query += ' ORDER BY created_at DESC';
+      const [rows] = await pool.query(query, params);
+      return rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        deadline: r.deadline ? new Date(r.deadline).toISOString().split('T')[0] : null
+      }));
+    },
+    getMyRequests: async (_, { userId }) => {
+      const [rows] = await pool.query(
+        'SELECT id, requester_id as requesterId, requester_name as requesterName, title, description, amount, deadline, status, created_at as createdAt FROM fund_requests WHERE requester_id = ? ORDER BY created_at DESC',
+        [userId]
+      );
+      return rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        deadline: r.deadline ? new Date(r.deadline).toISOString().split('T')[0] : null
+      }));
+    },
+    getPendingRequests: async () => {
+      const [rows] = await pool.query(
+        'SELECT id, requester_id as requesterId, requester_name as requesterName, title, description, amount, deadline, status, created_at as createdAt FROM fund_requests WHERE status = ? ORDER BY created_at DESC',
+        ['PENDING']
+      );
+      return rows.map(r => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        createdAt: r.createdAt ? new Date(r.createdAt).toISOString() : new Date().toISOString(),
+        deadline: r.deadline ? new Date(r.deadline).toISOString().split('T')[0] : null
+      }));
+    },
+    getBalance: async (_, { userId }) => {
+      return await getUserBalance(userId);
+    },
+    getChildren: async () => {
+      return await getAllChildren();
+    },
   },
   Mutation: {
-    addTransaction: (_, args) => {
-      const newTrans = { id: transactions.length + 1, ...args, date: new Date().toISOString() };
-      transactions.push(newTrans);
-      return newTrans;
+    addTransaction: async (_, { title, amount, type, userId }) => {
+      // Update balance in user-service
+      const balanceResult = await updateUserBalance(userId, amount, type);
+
+      // Save transaction to DB
+      const [result] = await pool.query(
+        'INSERT INTO transactions (user_id, title, amount, type) VALUES (?, ?, ?, ?)',
+        [userId, title, amount, type]
+      );
+
+      const newTrans = {
+        id: result.insertId,
+        title,
+        amount,
+        type,
+        userId,
+        date: new Date().toISOString()
+      };
+
+      return { transaction: newTrans, newBalance: balanceResult.balance };
     },
-    createFundRequest: (_, args) => {
-      const newReq = { id: fundRequests.length + 1, ...args, status: 'PENDING' };
-      fundRequests.push(newReq);
-      // Notify Parent (Realtime)
+    createFundRequest: async (_, args) => {
+      const { title, description, amount, deadline, requesterId, requesterName } = args;
+
+      const [result] = await pool.query(
+        'INSERT INTO fund_requests (requester_id, requester_name, title, description, amount, deadline, status) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        [requesterId, requesterName, title, description, amount, deadline || null, 'PENDING']
+      );
+
+      const newReq = {
+        id: result.insertId,
+        requesterId,
+        requesterName,
+        title,
+        description,
+        amount,
+        deadline,
+        status: 'PENDING',
+        createdAt: new Date().toISOString()
+      };
+
       pubsub.publish('REQUEST_UPDATED', { requestUpdated: newReq });
+
+      // Notify parent
+      await sendNotification(
+        1,
+        '📬 Pengajuan Dana Baru',
+        `${requesterName} mengajukan dana Rp ${amount.toLocaleString('id-ID')} untuk ${title}`,
+        'FUND_REQUEST'
+      );
+
       return newReq;
     },
-    approveRequest: (_, { requestId }) => {
-      const reqIndex = fundRequests.findIndex(r => r.id == requestId);
-      if(reqIndex > -1) {
-        fundRequests[reqIndex].status = 'APPROVED';
-        // Logic transfer saldo otomatis harusnya dipanggil disini (inter-service communication)
-        pubsub.publish('REQUEST_UPDATED', { requestUpdated: fundRequests[reqIndex] });
-        return fundRequests[reqIndex];
+    approveRequest: async (_, { requestId, parentId }) => {
+      // Get request from DB
+      const [rows] = await pool.query('SELECT * FROM fund_requests WHERE id = ?', [requestId]);
+      if (rows.length === 0) throw new Error('Request not found');
+
+      const request = rows[0];
+
+      // Check parent balance
+      const parentBalance = await getUserBalance(parentId);
+      if (parentBalance < parseFloat(request.amount)) {
+        throw new Error('Saldo orang tua tidak mencukupi');
       }
-      return null;
+
+      // Transfer funds
+      const parentResult = await updateUserBalance(parentId, parseFloat(request.amount), 'EXPENSE');
+      const childResult = await updateUserBalance(request.requester_id, parseFloat(request.amount), 'INCOME');
+
+      // Update status in DB
+      await pool.query('UPDATE fund_requests SET status = ? WHERE id = ?', ['APPROVED', requestId]);
+
+      const updatedReq = {
+        id: request.id,
+        requesterId: request.requester_id,
+        requesterName: request.requester_name,
+        title: request.title,
+        description: request.description,
+        amount: parseFloat(request.amount),
+        deadline: request.deadline,
+        status: 'APPROVED',
+        createdAt: request.created_at
+      };
+
+      pubsub.publish('REQUEST_UPDATED', { requestUpdated: updatedReq });
+
+      // Notify child
+      await sendNotification(
+        request.requester_id,
+        '✅ Pengajuan Disetujui',
+        `Pengajuan "${request.title}" sebesar Rp ${parseFloat(request.amount).toLocaleString('id-ID')} telah disetujui!`,
+        'REQUEST_APPROVED'
+      );
+
+      return {
+        request: updatedReq,
+        childBalance: childResult.balance,
+        parentBalance: parentResult.balance
+      };
+    },
+    rejectRequest: async (_, { requestId }) => {
+      const [rows] = await pool.query('SELECT * FROM fund_requests WHERE id = ?', [requestId]);
+      if (rows.length === 0) throw new Error('Request not found');
+
+      const request = rows[0];
+      await pool.query('UPDATE fund_requests SET status = ? WHERE id = ?', ['REJECTED', requestId]);
+
+      const updatedReq = {
+        id: request.id,
+        requesterId: request.requester_id,
+        requesterName: request.requester_name,
+        title: request.title,
+        description: request.description,
+        amount: parseFloat(request.amount),
+        deadline: request.deadline,
+        status: 'REJECTED',
+        createdAt: request.created_at
+      };
+
+      pubsub.publish('REQUEST_UPDATED', { requestUpdated: updatedReq });
+
+      // Notify child
+      await sendNotification(
+        request.requester_id,
+        '❌ Pengajuan Ditolak',
+        `Pengajuan "${request.title}" sebesar Rp ${parseFloat(request.amount).toLocaleString('id-ID')} ditolak.`,
+        'REQUEST_REJECTED'
+      );
+
+      return updatedReq;
+    },
+    deleteFundRequest: async (_, { requestId, userId }) => {
+      const [result] = await pool.query(
+        'DELETE FROM fund_requests WHERE id = ? AND requester_id = ? AND status = ?',
+        [requestId, userId, 'PENDING']
+      );
+      return result.affectedRows > 0;
     }
   },
   Subscription: {
@@ -96,10 +341,7 @@ const resolvers = {
 const schema = makeExecutableSchema({ typeDefs, resolvers });
 
 // --- SERVER SETUP ---
-const wsServer = new WebSocketServer({
-  server: httpServer,
-  path: '/graphql',
-});
+const wsServer = new WebSocketServer({ server: httpServer, path: '/graphql' });
 const serverCleanup = useServer({ schema }, wsServer);
 
 const server = new ApolloServer({
@@ -119,7 +361,8 @@ async function startServer() {
   await server.start();
   app.use('/graphql', cors(), bodyParser.json(), expressMiddleware(server));
   httpServer.listen(3002, () => {
-    console.log(`Transaction Service (GraphQL) ready at http://localhost:3002/graphql`);
+    console.log('Transaction Service (GraphQL + MySQL) ready at http://localhost:3002/graphql');
+    console.log('DB Host:', process.env.DB_HOST);
   });
 }
 
