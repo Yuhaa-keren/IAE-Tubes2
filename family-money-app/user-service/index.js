@@ -61,7 +61,7 @@ app.post('/register', async (req, res) => {
         // Send welcome notification
         await sendNotification(
             newUserId,
-            '🎉 Selamat Datang!',
+            'Selamat Datang!',
             `Halo ${username}! Akun kamu berhasil dibuat. Saldo awal: Rp 3.000.000`,
             'WELCOME'
         );
@@ -69,7 +69,7 @@ app.post('/register', async (req, res) => {
         // Notify parent
         await sendNotification(
             1,
-            '👶 Anak Baru Terdaftar',
+            'Anak Baru Terdaftar',
             `${username} telah bergabung sebagai anggota keluarga!`,
             'NEW_CHILD'
         );
@@ -110,6 +110,35 @@ app.post('/login', async (req, res) => {
         res.status(500).json({ message: "Database error" });
     }
 });
+
+// Get all children - MUST be before /users/:id to avoid conflict
+app.get('/users/children', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT id, username, role, balance FROM users WHERE role = ?',
+            ['CHILD']
+        );
+        res.json(rows.map(r => ({ ...r, balance: parseFloat(r.balance) })));
+    } catch (error) {
+        console.error('Get children error:', error);
+        res.status(500).json({ message: "Database error" });
+    }
+});
+
+// Get all parents - MUST be before /users/:id to avoid conflict
+app.get('/users/parents', async (req, res) => {
+    try {
+        const [rows] = await pool.query(
+            'SELECT id, username, role, balance FROM users WHERE role = ?',
+            ['PARENT']
+        );
+        res.json(rows.map(r => ({ ...r, balance: parseFloat(r.balance) })));
+    } catch (error) {
+        console.error('Get parents error:', error);
+        res.status(500).json({ message: "Database error" });
+    }
+});
+
 
 // Get user by ID
 app.get('/users/:id', async (req, res) => {
@@ -176,16 +205,50 @@ app.patch('/users/:id/balance', async (req, res) => {
     }
 });
 
-// Get all children
-app.get('/users/children', async (req, res) => {
+// Update profile (username)
+app.patch('/users/:id/profile', async (req, res) => {
+    const { username } = req.body;
+    const userId = req.params.id;
+
     try {
-        const [rows] = await pool.query(
-            'SELECT id, username, role, balance FROM users WHERE role = ?',
-            ['CHILD']
+        // Check if username already exists
+        const [existing] = await pool.query(
+            'SELECT id FROM users WHERE username = ? AND id != ?',
+            [username, userId]
         );
-        res.json(rows.map(r => ({ ...r, balance: parseFloat(r.balance) })));
+        if (existing.length > 0) {
+            return res.status(400).json({ message: "Username sudah digunakan" });
+        }
+
+        await pool.query('UPDATE users SET username = ? WHERE id = ?', [username, userId]);
+        res.json({ message: "Username berhasil diperbarui", username });
     } catch (error) {
-        console.error('Get children error:', error);
+        console.error('Update profile error:', error);
+        res.status(500).json({ message: "Database error" });
+    }
+});
+
+// Change password
+app.patch('/users/:id/password', async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+    const userId = req.params.id;
+
+    try {
+        // Verify old password
+        const [rows] = await pool.query(
+            'SELECT id FROM users WHERE id = ? AND password = ?',
+            [userId, oldPassword]
+        );
+
+        if (rows.length === 0) {
+            return res.status(400).json({ message: "Password lama tidak sesuai" });
+        }
+
+        // Update password
+        await pool.query('UPDATE users SET password = ? WHERE id = ?', [newPassword, userId]);
+        res.json({ message: "Password berhasil diubah" });
+    } catch (error) {
+        console.error('Change password error:', error);
         res.status(500).json({ message: "Database error" });
     }
 });

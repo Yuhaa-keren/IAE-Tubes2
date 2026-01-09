@@ -53,6 +53,11 @@ async function getAllChildren() {
   return await response.json();
 }
 
+async function getAllParents() {
+  const response = await fetch(`${USER_SERVICE_URL}/users/parents`);
+  return await response.json();
+}
+
 async function sendNotification(userId, title, message, type) {
   try {
     await fetch(`${NOTIFICATION_SERVICE_URL}/notifications`, {
@@ -63,6 +68,44 @@ async function sendNotification(userId, title, message, type) {
     console.log(`[Notification] Sent to user ${userId}: ${title}`);
   } catch (error) {
     console.error('Error sending notification:', error);
+  }
+}
+
+async function notifyAllParents(title, message, type) {
+  try {
+    console.log('[NotifyParents] Starting to notify parents...');
+    let parents = [];
+
+    // Try to get parents from user-service
+    try {
+      const response = await fetch(`${USER_SERVICE_URL}/users/parents`);
+      if (response.ok) {
+        parents = await response.json();
+        console.log(`[NotifyParents] Got ${parents.length} parents from user-service`);
+      } else {
+        console.log('[NotifyParents] Failed to get parents from user-service, using fallback');
+      }
+    } catch (fetchError) {
+      console.error('[NotifyParents] Fetch error:', fetchError.message);
+    }
+
+    // Fallback: query database directly for parents
+    if (!parents || parents.length === 0) {
+      console.log('[NotifyParents] Using database fallback...');
+      const [rows] = await pool.query('SELECT DISTINCT u.id FROM users u WHERE u.role = ?', ['PARENT']);
+      parents = rows;
+      console.log(`[NotifyParents] Got ${parents.length} parents from database`);
+    }
+
+    // Send notification to each parent
+    for (const parent of parents) {
+      console.log(`[NotifyParents] Sending notification to parent ID: ${parent.id}`);
+      await sendNotification(parent.id, title, message, type);
+    }
+
+    console.log('[NotifyParents] Done notifying parents');
+  } catch (error) {
+    console.error('[NotifyParents] Error:', error);
   }
 }
 
@@ -234,10 +277,9 @@ const resolvers = {
 
       pubsub.publish('REQUEST_UPDATED', { requestUpdated: newReq });
 
-      // Notify parent
-      await sendNotification(
-        1,
-        '📬 Pengajuan Dana Baru',
+      // Notify all parents
+      await notifyAllParents(
+        'Pengajuan Dana Baru',
         `${requesterName} mengajukan dana Rp ${amount.toLocaleString('id-ID')} untuk ${title}`,
         'FUND_REQUEST'
       );
@@ -281,7 +323,7 @@ const resolvers = {
       // Notify child
       await sendNotification(
         request.requester_id,
-        '✅ Pengajuan Disetujui',
+        'Pengajuan Disetujui',
         `Pengajuan "${request.title}" sebesar Rp ${parseFloat(request.amount).toLocaleString('id-ID')} telah disetujui!`,
         'REQUEST_APPROVED'
       );
@@ -316,7 +358,7 @@ const resolvers = {
       // Notify child
       await sendNotification(
         request.requester_id,
-        '❌ Pengajuan Ditolak',
+        'Pengajuan Ditolak',
         `Pengajuan "${request.title}" sebesar Rp ${parseFloat(request.amount).toLocaleString('id-ID')} ditolak.`,
         'REQUEST_REJECTED'
       );

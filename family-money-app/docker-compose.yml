@@ -26,7 +26,7 @@ services:
       - DB_HOST=host.docker.internal
       - DB_USER=root
       - DB_PASSWORD=
-      - DB_NAME=family_money
+      - DB_NAME=user_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -41,7 +41,7 @@ services:
       - DB_HOST=host.docker.internal
       - DB_USER=root
       - DB_PASSWORD=
-      - DB_NAME=family_money
+      - DB_NAME=transaction_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -58,7 +58,7 @@ services:
       - DB_HOST=host.docker.internal
       - DB_USER=root
       - DB_PASSWORD=
-      - DB_NAME=family_money
+      - DB_NAME=notification_db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

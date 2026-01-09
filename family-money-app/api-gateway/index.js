@@ -47,9 +47,13 @@ app.use('/graphql', createProxyMiddleware({
 }));
 
 // Proxy ke Notification Service (REST)
+// Menggunakan pathFilter agar path tidak di-strip
 app.use('/notifications', createProxyMiddleware({
-    target: 'http://notification-service:3003',
-    changeOrigin: true
+    target: 'http://notification-service:3003/notifications',
+    changeOrigin: true,
+    pathRewrite: {
+        '^/notifications': ''
+    }
 }));
 
 app.listen(3000, () => {

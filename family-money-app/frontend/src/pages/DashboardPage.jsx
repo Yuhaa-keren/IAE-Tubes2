@@ -75,12 +75,8 @@ export default function DashboardPage() {
       {/* Header */}
       <div className="header-flex">
         <div>
-          <h2 style={{ margin: 0 }}>Halo, {user.username}</h2>
-          <small style={{ color: '#666' }}>{user.role === 'PARENT' ? '👨‍👩‍👧 Orang Tua' : '👦 Anak'}</small>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <NotificationBell />
-          <button className="logout" onClick={logout}>Keluar</button>
+          <h2 style={{ margin: 0 }}>Dashboard</h2>
+          <small style={{ color: '#666' }}>Selamat datang kembali!</small>
         </div>
       </div>
 
@@ -88,24 +84,6 @@ export default function DashboardPage() {
       <div className="card" style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)', color: 'white' }}>
         <span style={{ opacity: 0.8 }}>Saldo Dompet</span>
         <h1 style={{ margin: '10px 0' }}>Rp {balance.toLocaleString('id-ID')}</h1>
-      </div>
-
-      {/* Menu Navigation */}
-      <div className="card" style={{ display: 'flex', gap: '10px' }}>
-        {user.role === 'CHILD' && (
-          <Link to="/fund-request" style={{ flex: 1 }}>
-            <button style={{ width: '100%', background: '#10b981', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-              📝 Pengajuan Dana
-            </button>
-          </Link>
-        )}
-        {user.role === 'PARENT' && (
-          <Link to="/monitor" style={{ flex: 1 }}>
-            <button style={{ width: '100%', background: '#8b5cf6', color: 'white', border: 'none', padding: '12px', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-              👀 Monitor Anak
-            </button>
-          </Link>
-        )}
       </div>
 
       {/* Form Input */}
